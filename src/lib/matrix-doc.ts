@@ -90,9 +90,12 @@ class Layout {
   doc: Doc;
   y = M.top;
   page = 1;
+  /** Right-aligned header caption; override per document. */
+  headerTitle = "Matriz de Fraude & Integridade Competitiva";
 
-  constructor(doc: Doc) {
+  constructor(doc: Doc, headerTitle?: string) {
     this.doc = doc;
+    if (headerTitle) this.headerTitle = headerTitle;
   }
 
   /** Ensure `h` pts fit; otherwise start a new page. */
@@ -122,7 +125,7 @@ class Layout {
       weight: "bold",
       spacing: 1.2,
     });
-    txt(d, "Matriz de Fraude & Integridade Competitiva", PAGE.w - M.right, 40, {
+    txt(d, this.headerTitle, PAGE.w - M.right, 40, {
       size: 8,
       color: C.muted,
       align: "right",
@@ -310,7 +313,27 @@ function callout(
 
 /* ---- cover -------------------------------------------------------- */
 
-function drawCover(doc: Doc) {
+interface CoverOpts {
+  title?: string;
+  subtitle?: string;
+  description?: string;
+  chips?: string[];
+  /** Split the title into two lines (used for long titles). */
+  titleLine2?: string;
+}
+
+function drawCover(doc: Doc, opts: CoverOpts = {}) {
+  const title = opts.title ?? "Matriz de Fraude";
+  const subtitle = opts.subtitle ?? "& Plano de Integridade Competitiva";
+  const description =
+    opts.description ??
+    "Como funcionam a pontuação de risco (Fraud Score), as premissas de detecção e as ações proporcionais para preservar a justiça da competição.";
+  const chips = opts.chips ?? [
+    "Documento de trabalho",
+    "Squad Prepara SP",
+    `v1.0 · ${new Date().toLocaleDateString("pt-BR")}`,
+  ];
+
   // Navy background with a subtle vertical gradient (banded fills).
   const bands = 60;
   for (let i = 0; i < bands; i++) {
@@ -353,17 +376,27 @@ function drawCover(doc: Doc) {
     align: "center",
   });
   y += 34;
-  txt(doc, "Matriz de Fraude", cx, y, {
+  txt(doc, title, cx, y, {
     size: 30,
     color: C.white,
     weight: "bold",
     align: "center",
   });
   y += 30;
-  txt(doc, "& Plano de Integridade Competitiva", cx, y, {
+  if (opts.titleLine2) {
+    txt(doc, opts.titleLine2, cx, y, {
+      size: 30,
+      color: C.white,
+      weight: "bold",
+      align: "center",
+    });
+    y += 30;
+  }
+  txt(doc, subtitle, cx, y, {
     size: 16,
     color: [200, 214, 236],
     align: "center",
+    maxWidth: 440,
   });
   y += 30;
 
@@ -373,20 +406,14 @@ function drawCover(doc: Doc) {
   doc.line(cx - 70, y, cx + 70, y);
   y += 26;
 
-  txt(
-    doc,
-    "Como funcionam a pontuação de risco (Fraud Score), as premissas de detecção e as ações proporcionais para preservar a justiça da competição.",
-    cx,
-    y,
-    { size: 10.5, color: [186, 200, 224], align: "center", maxWidth: 400 },
-  );
+  txt(doc, description, cx, y, {
+    size: 10.5,
+    color: [186, 200, 224],
+    align: "center",
+    maxWidth: 400,
+  });
 
   // Meta chips at the bottom
-  const chips = [
-    "Documento de trabalho",
-    "Squad Prepara SP",
-    `v1.0 · ${new Date().toLocaleDateString("pt-BR")}`,
-  ];
   let chy = PAGE.h - 120;
   txt(doc, "PARA COMPARTILHAMENTO INTERNO", cx, chy, {
     size: 8,

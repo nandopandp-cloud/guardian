@@ -74,7 +74,16 @@ export function HeaderExport({
             <p className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
               Documentação
             </p>
-            <MatrixDocButton />
+            <DocButton
+              label="Premissas Antifraude (PDF)"
+              iconColor="text-orange-500"
+              load={() => import("@/lib/antifraud-doc").then((m) => m.exportAntifraudDoc())}
+            />
+            <DocButton
+              label="Matriz de Fraude (PDF)"
+              iconColor="text-blue-500"
+              load={() => import("@/lib/matrix-doc-build").then((m) => m.exportMatrixDoc())}
+            />
           </div>
         </div>
       )}
@@ -82,8 +91,16 @@ export function HeaderExport({
   );
 }
 
-/** Downloads the institutional Fraud Matrix document (Prepara SP). */
-function MatrixDocButton() {
+/** Downloads an institutional PDF document (Prepara SP), lazy-loaded. */
+function DocButton({
+  label,
+  iconColor,
+  load,
+}: {
+  label: string;
+  iconColor: string;
+  load: () => Promise<void>;
+}) {
   const [busy, setBusy] = useState(false);
   return (
     <button
@@ -91,8 +108,7 @@ function MatrixDocButton() {
         if (busy) return;
         setBusy(true);
         try {
-          const { exportMatrixDoc } = await import("@/lib/matrix-doc-build");
-          await exportMatrixDoc();
+          await load();
         } finally {
           setBusy(false);
         }
@@ -103,9 +119,9 @@ function MatrixDocButton() {
       {busy ? (
         <Loader2 className="size-4 animate-spin" />
       ) : (
-        <BookOpen className="size-4 text-blue-500" />
+        <BookOpen className={`size-4 ${iconColor}`} />
       )}
-      Matriz de Fraude (PDF)
+      {label}
     </button>
   );
 }
