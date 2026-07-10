@@ -1,0 +1,1139 @@
+<html class="scroll-smooth" lang="en"><head>
+<script id="aura-supabase-token-firewall">(function () {
+  if (window.__AURA_SUPABASE_FIREWALL__) return;
+  window.__AURA_SUPABASE_FIREWALL__ = true;
+
+  var SUPABASE_HOST = "hoirqrkdgbmvpwutwuwj.supabase.co";
+  var BLOCKED_KEY_PATTERNS = [
+    /^sb-[a-z0-9-]+-auth-token$/i,
+    /^supabase\.auth\.token$/i
+  ];
+
+  function isBlockedStorageKey(key) {
+    if (typeof key !== "string") return false;
+    for (var i = 0; i < BLOCKED_KEY_PATTERNS.length; i++) {
+      if (BLOCKED_KEY_PATTERNS[i].test(key)) return true;
+    }
+    return false;
+  }
+
+  function toAbsoluteUrl(input) {
+    try {
+      return new URL(input, window.location.href);
+    } catch {
+      return null;
+    }
+  }
+
+  function isSupabaseDestination(input) {
+    var parsed = toAbsoluteUrl(input);
+    if (!parsed) return false;
+    if (SUPABASE_HOST && parsed.host === SUPABASE_HOST) return true;
+    return parsed.host.endsWith(".supabase.co");
+  }
+
+  function pathLooksSensitive(input) {
+    var parsed = toAbsoluteUrl(input);
+    if (!parsed) return false;
+    return /^\/(auth|rest|functions)\/v1\//.test(parsed.pathname || "");
+  }
+
+  function headersContainAuth(headersLike) {
+    if (!headersLike) return false;
+
+    try {
+      if (typeof Headers !== "undefined" && headersLike instanceof Headers) {
+        return !!(headersLike.get("authorization") || headersLike.get("apikey"));
+      }
+    } catch {}
+
+    if (Array.isArray(headersLike)) {
+      for (var i = 0; i < headersLike.length; i++) {
+        var pair = headersLike[i] || [];
+        var name = String(pair[0] || "").toLowerCase();
+        if (name === "authorization" || name === "apikey") return true;
+      }
+      return false;
+    }
+
+    if (typeof headersLike === "object") {
+      var keys = Object.keys(headersLike);
+      for (var j = 0; j < keys.length; j++) {
+        var k = keys[j].toLowerCase();
+        if (k === "authorization" || k === "apikey") return true;
+      }
+    }
+    return false;
+  }
+
+  function requestLooksSensitive(input, init, extraHeaders) {
+    var url = "";
+    try {
+      if (typeof input === "string") {
+        url = input;
+      } else if (input && typeof input.url === "string") {
+        url = input.url;
+      }
+    } catch {}
+
+    var headers =
+      (init && init.headers) ||
+      (input && input.headers) ||
+      extraHeaders ||
+      null;
+    var hasAuthHeaders = headersContainAuth(headers);
+    if (hasAuthHeaders) return true;
+
+    if (!url) return false;
+    if (isSupabaseDestination(url) && pathLooksSensitive(url)) return true;
+    return false;
+  }
+
+  function patchStorage(storage, storageName) {
+    if (!storage) return;
+    var proto = Object.getPrototypeOf(storage);
+    if (!proto || proto.__auraSupabaseFirewallPatched) return;
+
+    var rawGetItem = proto.getItem;
+    var rawSetItem = proto.setItem;
+    var rawRemoveItem = proto.removeItem;
+    var rawClear = proto.clear;
+    var rawKey = proto.key;
+    var rawLengthDescriptor = Object.getOwnPropertyDescriptor(proto, "length");
+    var rawLengthGet = rawLengthDescriptor && rawLengthDescriptor.get;
+
+    function getRawLength(instance) {
+      try {
+        if (rawLengthGet) return Number(rawLengthGet.call(instance) || 0);
+      } catch {}
+      try {
+        return Number(instance.length || 0);
+      } catch {}
+      return 0;
+    }
+
+    function getVisibleKeys(instance) {
+      var visible = [];
+      var total = getRawLength(instance);
+      for (var i = 0; i < total; i++) {
+        var currentKey = rawKey.call(instance, i);
+        if (currentKey && !isBlockedStorageKey(currentKey)) {
+          visible.push(currentKey);
+        }
+      }
+      return visible;
+    }
+
+    function maskBlockedKeyProperty(instance, keyName) {
+      if (!keyName || !isBlockedStorageKey(keyName)) return;
+      try {
+        Object.defineProperty(instance, keyName, {
+          configurable: true,
+          enumerable: false,
+          get: function () {
+            return null;
+          },
+          set: function () {
+            return true;
+          }
+        });
+      } catch {}
+    }
+
+    function syncBlockedKeyProperties(instance) {
+      var total = getRawLength(instance);
+      for (var i = 0; i < total; i++) {
+        var k = rawKey.call(instance, i);
+        if (k) maskBlockedKeyProperty(instance, k);
+      }
+    }
+
+    proto.getItem = function (key) {
+      syncBlockedKeyProperties(this);
+      if (isBlockedStorageKey(String(key))) return null;
+      return rawGetItem.call(this, key);
+    };
+
+    proto.setItem = function (key, value) {
+      if (isBlockedStorageKey(String(key))) return;
+      return rawSetItem.call(this, key, value);
+    };
+
+    proto.removeItem = function (key) {
+      if (isBlockedStorageKey(String(key))) return;
+      return rawRemoveItem.call(this, key);
+    };
+
+    proto.clear = function () {
+      if (typeof rawClear !== "function") return;
+
+      // Preserve blocked keys across clear() to prevent auth token/session wipe.
+      var preservedBlockedEntries = [];
+      var total = getRawLength(this);
+      for (var i = 0; i < total; i++) {
+        var blockedKey = rawKey.call(this, i);
+        if (blockedKey && isBlockedStorageKey(blockedKey)) {
+          preservedBlockedEntries.push([
+            blockedKey,
+            rawGetItem.call(this, blockedKey),
+          ]);
+        }
+      }
+
+      rawClear.call(this);
+
+      for (var j = 0; j < preservedBlockedEntries.length; j++) {
+        var entry = preservedBlockedEntries[j];
+        var key = entry[0];
+        var value = entry[1];
+        if (typeof key === "string" && typeof value === "string") {
+          rawSetItem.call(this, key, value);
+        }
+      }
+
+      syncBlockedKeyProperties(this);
+    };
+
+    proto.key = function (index) {
+      syncBlockedKeyProperties(this);
+      var visible = getVisibleKeys(this);
+      return visible[index] || null;
+    };
+
+    try {
+      Object.defineProperty(proto, "length", {
+        configurable: true,
+        enumerable: false,
+        get: function () {
+          syncBlockedKeyProperties(this);
+          return getVisibleKeys(this).length;
+        }
+      });
+    } catch {}
+
+    var proxyStorage = null;
+    try {
+      proxyStorage = new Proxy(storage, {
+        get: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return null;
+          if (prop === "length") return getVisibleKeys(target).length;
+          if (prop === "key") {
+            return function (index) {
+              var visible = getVisibleKeys(target);
+              return visible[index] || null;
+            };
+          }
+          if (prop === "clear") {
+            return function () {
+              if (typeof rawClear !== "function") return;
+
+              var preservedBlockedEntries = [];
+              var total = getRawLength(target);
+              for (var i = 0; i < total; i++) {
+                var blockedKey = rawKey.call(target, i);
+                if (blockedKey && isBlockedStorageKey(blockedKey)) {
+                  preservedBlockedEntries.push([
+                    blockedKey,
+                    rawGetItem.call(target, blockedKey),
+                  ]);
+                }
+              }
+
+              rawClear.call(target);
+
+              for (var j = 0; j < preservedBlockedEntries.length; j++) {
+                var entry = preservedBlockedEntries[j];
+                var key = entry[0];
+                var value = entry[1];
+                if (typeof key === "string" && typeof value === "string") {
+                  rawSetItem.call(target, key, value);
+                }
+              }
+
+              syncBlockedKeyProperties(target);
+            };
+          }
+
+          var value = target[prop];
+          if (typeof value === "function") return value.bind(target);
+          return value;
+        },
+        set: function (target, prop, value) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return true;
+          target[prop] = value;
+          return true;
+        },
+        has: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return false;
+          return prop in target;
+        },
+        deleteProperty: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return true;
+          try {
+            delete target[prop];
+          } catch {}
+          return true;
+        },
+        ownKeys: function (target) {
+          return getVisibleKeys(target);
+        },
+        getOwnPropertyDescriptor: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) {
+            return undefined;
+          }
+          if (prop === "length") {
+            return {
+              configurable: true,
+              enumerable: false,
+              value: getVisibleKeys(target).length,
+              writable: false
+            };
+          }
+          return Object.getOwnPropertyDescriptor(target, prop);
+        }
+      });
+    } catch {}
+
+    try {
+      if (proxyStorage) {
+        Object.defineProperty(window, storageName, {
+          configurable: true,
+          enumerable: true,
+          get: function () {
+            return proxyStorage;
+          }
+        });
+      }
+    } catch {}
+
+    syncBlockedKeyProperties(storage);
+    proto.__auraSupabaseFirewallPatched = true;
+  }
+
+  function patchCookieAccess() {
+    try {
+      var cookieDescriptor = Object.getOwnPropertyDescriptor(Document.prototype, "cookie");
+      if (!cookieDescriptor || !cookieDescriptor.configurable) return;
+
+      Object.defineProperty(document, "cookie", {
+        configurable: true,
+        enumerable: false,
+        get: function () {
+          return "";
+        },
+        set: function () {
+          return true;
+        }
+      });
+    } catch {}
+  }
+
+  function patchFetch() {
+    if (typeof window.fetch !== "function") return;
+    var rawFetch = window.fetch.bind(window);
+    window.fetch = function (input, init) {
+      if (requestLooksSensitive(input, init, null)) {
+        return Promise.reject(new Error("Blocked by Aura security policy"));
+      }
+      return rawFetch(input, init);
+    };
+  }
+
+  function patchXHR() {
+    if (typeof XMLHttpRequest === "undefined") return;
+    var rawOpen = XMLHttpRequest.prototype.open;
+    var rawSetHeader = XMLHttpRequest.prototype.setRequestHeader;
+    var rawSend = XMLHttpRequest.prototype.send;
+
+    XMLHttpRequest.prototype.open = function (method, url) {
+      this.__auraRequestUrl = String(url || "");
+      this.__auraHeaders = {};
+      return rawOpen.apply(this, arguments);
+    };
+
+    XMLHttpRequest.prototype.setRequestHeader = function (name, value) {
+      if (!this.__auraHeaders) this.__auraHeaders = {};
+      this.__auraHeaders[String(name || "").toLowerCase()] = String(value || "");
+      return rawSetHeader.apply(this, arguments);
+    };
+
+    XMLHttpRequest.prototype.send = function () {
+      if (requestLooksSensitive(this.__auraRequestUrl || "", null, this.__auraHeaders || null)) {
+        throw new Error("Blocked by Aura security policy");
+      }
+      return rawSend.apply(this, arguments);
+    };
+  }
+
+  function patchBeacon() {
+    if (typeof navigator.sendBeacon !== "function") return;
+    var rawBeacon = navigator.sendBeacon.bind(navigator);
+    navigator.sendBeacon = function (url, data) {
+      if (requestLooksSensitive(url, null, null)) return false;
+      return rawBeacon(url, data);
+    };
+  }
+
+  function patchWebSocket() {
+    if (typeof WebSocket === "undefined") return;
+    var RawWebSocket = WebSocket;
+    window.WebSocket = function (url, protocols) {
+      if (requestLooksSensitive(String(url || ""), null, null)) {
+        throw new Error("Blocked by Aura security policy");
+      }
+      return new RawWebSocket(url, protocols);
+    };
+    window.WebSocket.prototype = RawWebSocket.prototype;
+  }
+
+  patchStorage(window.localStorage, "localStorage");
+  patchStorage(window.sessionStorage, "sessionStorage");
+  patchCookieAccess();
+  patchFetch();
+  patchXHR();
+  patchBeacon();
+  patchWebSocket();
+})();</script>
+<script>
+try{if(window.parent&&window.parent!==window){window.parent.promotekit_referral="1fd2949a-d22c-431b-92bf-02d4ad04ee24";window.parent.document.cookie="promotekit_referral=1fd2949a-d22c-431b-92bf-02d4ad04ee24;path=/;domain=.aura.build;max-age=31536000"}}catch(e){}
+</script>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Horizons | The New Standard in Travel</title>
+<script src="assets/resource_3fa48481346f.es"></script>
+<script src="assets/iconify-icon_e19829e7f0e8.js"></script>
+<link href="assets/css2_19fd9cc6b396.css" rel="stylesheet"/>
+<style>
+body {
+font-family: 'Inter', sans-serif;
+-webkit-font-smoothing: antialiased;
+-moz-osx-font-smoothing: grayscale;
+}
+/* Hide Scrollbar but keep functionality */
+.hide-scrollbar::-webkit-scrollbar { display: none; }
+.hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+/* Extremely subtle grain overlay for dark sections */
+.bg-noise {
+background-image: url("filter_3E_3Crect_width__100_25_46a204f4fc50.html")' opacity='0.05'/%3E%3C/svg%3E");
+}
+/* Number flip animation utility */
+.flip-animate {
+animation: flip 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+@keyframes flip {
+0% { transform: translateY(0); opacity: 1; }
+50% { transform: translateY(-10px); opacity: 0; }
+51% { transform: translateY(10px); opacity: 0; }
+100% { transform: translateY(0); opacity: 1; }
+}
+/* Custom Dropdown Animation */
+.dropdown-enter {
+opacity: 0;
+transform: scale(0.95) translateY(-10px);
+transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.dropdown-enter-active {
+opacity: 1;
+transform: scale(1) translateY(0);
+}
+/* Subtle dot grid for the map section */
+.bg-dot-grid {
+background-image: radial-gradient(#e5e7eb 1px, transparent 1px);
+background-size: 24px 24px;
+}
+</style><!-- aura-ga4-start -->
+<script async="" src="assets/js_19c0e2c2c8a8.js"></script>
+<script>
+window.dataLayer = window.dataLayer || [];
+function gtag(){dataLayer.push(arguments);}
+gtag('js', new Date());
+gtag('config', 'G-2M6V79H761');
+</script>
+<!-- aura-ga4-end -->
+<style data-scroll-fix="true">
+        /* Scroll fixes for offline viewing */
+        html, body {
+            overflow: auto !important;
+            overflow-x: hidden !important;
+            height: auto !important;
+            min-height: 100% !important;
+            scroll-behavior: auto !important;
+            opacity: 1 !important;
+            visibility: visible !important;
+        }
+        
+        /* Force visibility - many sites use JS animations for initial display */
+        body, .wrapper, main, #__next, #app, .page, .content {
+            opacity: 1 !important;
+            visibility: visible !important;
+            transform: none !important;
+        }
+        
+        /* Disable loader/preloader overlays */
+        .loader, .preloader, .loading, [class*="loader"], [class*="preloader"] {
+            display: none !important;
+            opacity: 0 !important;
+        }
+        
+        /* Show elements that might be hidden for animation */
+        .word-inner, .char, .line, [data-aos], [data-scroll],
+        .hero-text span, .hero-fade, [class*="hero"] span {
+            opacity: 1 !important;
+            transform: none !important;
+            visibility: visible !important;
+        }
+        
+        /* Reset Tailwind animation utility classes */
+        .translate-y-full, .translate-x-full, .-translate-y-full, .-translate-x-full,
+        .translate-y-1\/2, .-translate-y-1\/2, .translate-y-\[100\%\], .translate-y-\[110\%\] {
+            transform: none !important;
+        }
+        
+        /* Force visibility on common hidden-for-animation patterns */
+        .opacity-0, [class*="opacity-0"] {
+            opacity: 1 !important;
+        }
+        
+        /* Reset scale transforms used for animations */
+        .scale-0, .scale-50, .scale-75 {
+            transform: none !important;
+        }
+        
+        html.lenis, html.lenis-smooth, 
+        body.lenis, body.lenis-smooth,
+        .lenis-wrapper, .lenis-content,
+        [data-lenis-prevent], [data-scroll-container] {
+            overflow: visible !important;
+            height: auto !important;
+        }
+        
+        /* Fix flex containers that might cut off content */
+        body.flex.items-center,
+        body.flex.justify-center {
+            align-items: flex-start !important;
+            min-height: 100vh;
+            height: auto !important;
+        }
+        
+        /* Ensure main content scrolls */
+        main, #__next, #__nuxt, #app, .main-content {
+            overflow: visible !important;
+            height: auto !important;
+        }
+        </style></head>
+<body class="bg-[#FAFAFA] text-gray-500 antialiased overflow-x-hidden selection:bg-gray-200 selection:text-black">
+<!-- Navigation -->
+<nav class="fixed top-0 w-full bg-white/70 backdrop-blur-xl border-b border-gray-200/50 z-50 transition-all duration-300" id="navbar">
+<div class="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
+<a class="flex items-center gap-2 group" href="#">
+<iconify-icon class="text-black text-xl group-hover:rotate-12 transition-transform duration-300" icon="solar:routing-linear" style="stroke-width: 1.5;"></iconify-icon>
+<span class="font-medium text-base tracking-tighter text-black uppercase">HORIZONS</span>
+</a>
+<div class="hidden md:flex items-center gap-8">
+<a class="font-normal text-sm text-black transition-colors" href="#">Stays</a>
+<a class="font-normal text-sm text-gray-500 hover:text-black transition-colors" href="#">Flights</a>
+<a class="font-normal text-sm text-gray-500 hover:text-black transition-colors" href="#">Experiences</a>
+<a class="font-normal text-sm text-gray-500 hover:text-black transition-colors" href="#">Business</a>
+</div>
+<div class="hidden md:flex items-center gap-4">
+<button class="flex items-center gap-1 text-sm font-normal text-gray-500 hover:text-black transition-colors">
+                    USD <iconify-icon class="text-xs" icon="solar:alt-arrow-down-linear"></iconify-icon>
+</button>
+<div class="w-px h-4 bg-gray-200"></div>
+<button class="text-sm font-medium text-black hover:text-gray-600 transition-colors">Log in</button>
+<button class="text-sm font-medium text-white bg-black px-4 py-2 rounded-full hover:bg-gray-800 hover:scale-105 transition-all duration-200 active:scale-95 shadow-sm">
+                    Sign up
+                </button>
+</div>
+<button class="md:hidden text-black text-2xl">
+<iconify-icon icon="solar:hamburger-menu-linear"></iconify-icon>
+</button>
+</div>
+</nav>
+<!-- Hero Section -->
+<header class="relative pt-32 pb-24 lg:pt-48 lg:pb-32 overflow-hidden flex flex-col items-center justify-center min-h-[90vh]">
+<div class="absolute top-0 left-1/2 -translate-x-1/2 w-full h-[800px] bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-gray-100 via-[#FAFAFA] to-[#FAFAFA] -z-10"></div>
+<div class="max-w-4xl mx-auto px-6 text-center relative z-10 w-full">
+<div class="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-gray-200 bg-white shadow-sm mb-8 animate-fade-in-up">
+<span class="w-2 h-2 rounded-full bg-black animate-pulse"></span>
+<span class="text-xs font-medium text-black tracking-wide uppercase">Introducing Horizons Select</span>
+</div>
+<h1 class="font-medium text-5xl md:text-7xl lg:text-8xl tracking-tighter text-black leading-[1.05] mb-6">
+                The new standard<br/>in global travel.
+            </h1>
+<p class="font-normal text-lg md:text-xl text-gray-500 leading-relaxed mb-12 max-w-2xl mx-auto tracking-tight">
+                Experience unparalleled curation. Seamlessly book exceptional stays, private flights, and extraordinary journeys worldwide.
+            </p>
+<!-- Search Widget -->
+<div class="w-full max-w-3xl mx-auto">
+<div class="flex items-center justify-center gap-6 mb-4">
+<button class="text-sm font-medium text-black border-b border-black pb-1">Stays</button>
+<button class="text-sm font-normal text-gray-400 hover:text-black transition-colors pb-1">Flights</button>
+<button class="text-sm font-normal text-gray-400 hover:text-black transition-colors pb-1">Cars</button>
+</div>
+<div class="bg-white rounded-full p-2 flex flex-col md:flex-row items-center border border-gray-200 shadow-[0_8px_30px_rgb(0,0,0,0.04)] hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)] transition-shadow duration-300 relative z-20">
+<div class="flex-1 w-full md:w-auto px-4 py-2 md:py-0 md:border-r border-gray-100 flex items-center gap-3 group">
+<iconify-icon class="text-gray-400 text-lg group-focus-within:text-black transition-colors" icon="solar:map-point-linear"></iconify-icon>
+<div class="flex flex-col items-start w-full">
+<label class="text-[0.65rem] font-medium tracking-widest uppercase text-gray-400">Where to?</label>
+<input class="w-full text-sm font-medium text-black bg-transparent outline-none placeholder:text-gray-300 placeholder:font-normal" placeholder="Search destinations" type="text"/>
+</div>
+</div>
+<div class="flex-1 w-full md:w-auto px-4 py-2 md:py-0 md:border-r border-gray-100 flex items-center gap-3 group border-t md:border-t-0">
+<iconify-icon class="text-gray-400 text-lg group-focus-within:text-black transition-colors" icon="solar:calendar-linear"></iconify-icon>
+<div class="flex flex-col items-start w-full cursor-pointer">
+<label class="text-[0.65rem] font-medium tracking-widest uppercase text-gray-400">Dates</label>
+<input class="w-full text-sm font-medium text-black bg-transparent outline-none placeholder:text-gray-300 placeholder:font-normal cursor-pointer" placeholder="Add dates" readonly="" type="text"/>
+</div>
+</div>
+<div class="flex-1 w-full md:w-auto px-4 py-2 md:py-0 flex items-center justify-between border-t md:border-t-0 relative group" id="guest-trigger">
+<div class="flex items-center gap-3 cursor-pointer w-full">
+<iconify-icon class="text-gray-400 text-lg group-hover:text-black transition-colors" icon="solar:users-group-rounded-linear"></iconify-icon>
+<div class="flex flex-col items-start">
+<label class="text-[0.65rem] font-medium tracking-widest uppercase text-gray-400">Who</label>
+<span class="text-sm font-medium text-black" id="guest-count">2 Guests</span>
+</div>
+</div>
+<div class="hidden absolute top-[calc(100%+16px)] right-0 w-[280px] bg-white border border-gray-200 shadow-[0_20px_40px_rgba(0,0,0,0.08)] rounded-2xl p-5 z-50 dropdown-enter" id="guest-dropdown">
+<div class="flex items-center justify-between mb-6">
+<div>
+<span class="block text-sm font-medium text-black">Adults</span>
+<span class="block text-xs text-gray-400 mt-0.5">Ages 13 or above</span>
+</div>
+<div class="flex items-center gap-3">
+<button class="w-8 h-8 rounded-full border border-gray-200 flex items-center justify-center text-gray-400 hover:border-black hover:text-black transition-colors" onclick="updateGuests('adults', -1)">-</button>
+<span class="text-sm font-medium w-4 text-center text-black" id="adults-val">2</span>
+<button class="w-8 h-8 rounded-full border border-gray-200 flex items-center justify-center text-gray-400 hover:border-black hover:text-black transition-colors" onclick="updateGuests('adults', 1)">+</button>
+</div>
+</div>
+<div class="flex items-center justify-between">
+<div>
+<span class="block text-sm font-medium text-black">Children</span>
+<span class="block text-xs text-gray-400 mt-0.5">Ages 2-12</span>
+</div>
+<div class="flex items-center gap-3">
+<button class="w-8 h-8 rounded-full border border-gray-200 flex items-center justify-center text-gray-400 hover:border-black hover:text-black transition-colors" onclick="updateGuests('children', -1)">-</button>
+<span class="text-sm font-medium w-4 text-center text-black" id="children-val">0</span>
+<button class="w-8 h-8 rounded-full border border-gray-200 flex items-center justify-center text-gray-400 hover:border-black hover:text-black transition-colors" onclick="updateGuests('children', 1)">+</button>
+</div>
+</div>
+</div>
+</div>
+<button class="w-full md:w-auto mt-2 md:mt-0 bg-black text-white px-8 py-3.5 rounded-full flex items-center justify-center gap-2 hover:bg-gray-800 hover:scale-[1.02] transition-all duration-200 shadow-sm">
+<iconify-icon class="text-lg" icon="solar:magnifer-linear"></iconify-icon>
+<span class="text-sm font-medium md:hidden">Search</span>
+</button>
+</div>
+</div>
+</div>
+<div class="max-w-7xl mx-auto px-6 mt-20 w-full grid grid-cols-3 gap-6 opacity-90 hover:opacity-100 transition-opacity duration-500 hidden md:grid">
+<div class="h-[40vh] rounded-2xl overflow-hidden relative translate-y-8">
+<img alt="Tokyo" class="w-full h-full object-cover filter grayscale-[20%] hover:grayscale-0 transition-all duration-700 hover:scale-105" src="assets/photo-1540959733332-eab4deabee_05e7db3035cc.avif"/>
+</div>
+<div class="h-[45vh] rounded-2xl overflow-hidden relative shadow-[0_20px_40px_rgba(0,0,0,0.1)] z-10">
+<img alt="Santorini" class="w-full h-full object-cover hover:scale-105 transition-transform duration-700" src="assets/photo-1613395877344-13d4a8e0d4_d475e1b7d243.avif"/>
+</div>
+<div class="h-[40vh] rounded-2xl overflow-hidden relative translate-y-12">
+<img alt="Bali" class="w-full h-full object-cover filter grayscale-[20%] hover:grayscale-0 transition-all duration-700 hover:scale-105" src="assets/photo-1537996194471-e657df975a_02b667fbb743.avif"/>
+</div>
+</div>
+</header>
+<!-- Trust / Stats Section -->
+<section class="border-y border-gray-200 bg-white py-8">
+<div class="max-w-7xl mx-auto px-6 flex flex-wrap justify-between items-center gap-8">
+<div class="flex items-center gap-3">
+<iconify-icon class="text-xl text-black" icon="solar:shield-check-linear" style="stroke-width: 1.5;"></iconify-icon>
+<div>
+<p class="text-sm font-medium text-black">Vetted Properties</p>
+<p class="text-xs text-gray-400">Top 1% of global stays</p>
+</div>
+</div>
+<div class="hidden md:block w-px h-8 bg-gray-100"></div>
+<div class="flex items-center gap-3">
+<iconify-icon class="text-xl text-black" icon="solar:global-linear" style="stroke-width: 1.5;"></iconify-icon>
+<div>
+<p class="text-sm font-medium text-black">Global Access</p>
+<p class="text-xs text-gray-400">150+ countries</p>
+</div>
+</div>
+<div class="hidden md:block w-px h-8 bg-gray-100"></div>
+<div class="flex items-center gap-3">
+<iconify-icon class="text-xl text-black" icon="solar:tag-price-linear" style="stroke-width: 1.5;"></iconify-icon>
+<div>
+<p class="text-sm font-medium text-black">Member Pricing</p>
+<p class="text-xs text-gray-400">Average 15% savings</p>
+</div>
+</div>
+<div class="hidden lg:block w-px h-8 bg-gray-100"></div>
+<div class="flex items-center gap-3">
+<iconify-icon class="text-xl text-black" icon="solar:headphones-round-sound-linear" style="stroke-width: 1.5;"></iconify-icon>
+<div>
+<p class="text-sm font-medium text-black">Concierge Support</p>
+<p class="text-xs text-gray-400">24/7 dedicated service</p>
+</div>
+</div>
+</div>
+</section>
+<!-- Curated Collection -->
+<section class="py-24 bg-[#FAFAFA]">
+<div class="max-w-7xl mx-auto px-6">
+<div class="flex flex-col md:flex-row md:items-end justify-between mb-12 gap-6">
+<div>
+<h2 class="font-medium text-3xl tracking-tight text-black mb-2">The Collection</h2>
+<p class="text-gray-500 font-normal text-base tracking-tight">Handpicked properties defined by exceptional design and service.</p>
+</div>
+<div class="flex gap-2">
+<button class="px-4 py-2 rounded-full bg-black text-white text-sm font-medium transition-all hover:scale-105 active:scale-95">All</button>
+<button class="px-4 py-2 rounded-full bg-white text-gray-600 text-sm font-medium hover:text-black border border-gray-200 transition-all hover:border-gray-300">Resorts</button>
+<button class="px-4 py-2 rounded-full bg-white text-gray-600 text-sm font-medium hover:text-black border border-gray-200 transition-all hover:border-gray-300">Villas</button>
+<button class="px-4 py-2 rounded-full bg-white text-gray-600 text-sm font-medium hover:text-black border border-gray-200 transition-all hover:border-gray-300">Urban</button>
+</div>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+<a class="group block" href="#">
+<div class="relative aspect-[4/3] rounded-2xl overflow-hidden mb-4 bg-gray-100 border border-gray-200/50">
+<img alt="Resort" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700 ease-out" src="assets/photo-1566073771259-6a85060999_377f8c16335d.avif"/>
+<button class="absolute top-4 right-4 w-8 h-8 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center text-white border border-white/20 hover:bg-white hover:text-black transition-colors z-10">
+<iconify-icon class="text-sm" icon="solar:heart-linear" style="stroke-width: 1.5;"></iconify-icon>
+</button>
+</div>
+<div class="flex justify-between items-start">
+<div>
+<h3 class="font-medium text-lg text-black tracking-tight mb-1">Amanera Resort</h3>
+<p class="text-gray-500 text-sm mb-2">Dominican Republic</p>
+</div>
+<div class="text-right">
+<p class="text-sm font-medium text-black">$1,200 <span class="text-xs text-gray-400 font-normal">/night</span></p>
+<div class="flex items-center justify-end gap-1 text-xs font-medium text-black mt-1">
+<iconify-icon class="text-black" icon="solar:star-bold"></iconify-icon> 4.98
+                            </div>
+</div>
+</div>
+</a>
+<a class="group block" href="#">
+<div class="relative aspect-[4/3] rounded-2xl overflow-hidden mb-4 bg-gray-100 border border-gray-200/50">
+<img alt="Hotel" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700 ease-out" src="assets/917d6f93-fb36-439a-8c48-884b67_1e33efa61316.jpg"/>
+<button class="absolute top-4 right-4 w-8 h-8 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center text-white border border-white/20 hover:bg-white hover:text-black transition-colors z-10">
+<iconify-icon class="text-sm" icon="solar:heart-linear" style="stroke-width: 1.5;"></iconify-icon>
+</button>
+</div>
+<div class="flex justify-between items-start">
+<div>
+<h3 class="font-medium text-lg text-black tracking-tight mb-1">Hoshinoya Tokyo</h3>
+<p class="text-gray-500 text-sm mb-2">Tokyo, Japan</p>
+</div>
+<div class="text-right">
+<p class="text-sm font-medium text-black">$850 <span class="text-xs text-gray-400 font-normal">/night</span></p>
+<div class="flex items-center justify-end gap-1 text-xs font-medium text-black mt-1">
+<iconify-icon class="text-black" icon="solar:star-bold"></iconify-icon> 4.95
+                            </div>
+</div>
+</div>
+</a>
+<a class="group block" href="#">
+<div class="relative aspect-[4/3] rounded-2xl overflow-hidden mb-4 bg-gray-100 border border-gray-200/50">
+<img alt="Villa" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700 ease-out" src="assets/photo-1582719478250-c89cae4dc8_652131d0fcdf.avif"/>
+<button class="absolute top-4 right-4 w-8 h-8 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center text-white border border-white/20 hover:bg-white hover:text-black transition-colors z-10">
+<iconify-icon class="text-sm" icon="solar:heart-linear" style="stroke-width: 1.5;"></iconify-icon>
+</button>
+<div class="absolute top-4 left-4 bg-white/90 backdrop-blur text-black text-[0.65rem] font-medium uppercase tracking-widest px-2 py-1 rounded">Rare Find</div>
+</div>
+<div class="flex justify-between items-start">
+<div>
+<h3 class="font-medium text-lg text-black tracking-tight mb-1">Villa Althea</h3>
+<p class="text-gray-500 text-sm mb-2">Santorini, Greece</p>
+</div>
+<div class="text-right">
+<p class="text-sm font-medium text-black">$1,450 <span class="text-xs text-gray-400 font-normal">/night</span></p>
+<div class="flex items-center justify-end gap-1 text-xs font-medium text-black mt-1">
+<iconify-icon class="text-black" icon="solar:star-bold"></iconify-icon> 5.0
+                            </div>
+</div>
+</div>
+</a>
+</div>
+<div class="text-center mt-12">
+<button class="inline-flex items-center gap-2 text-sm font-medium text-black border border-gray-200 bg-white px-6 py-3 rounded-full hover:bg-gray-50 transition-colors">
+                    Explore all properties <iconify-icon icon="solar:arrow-right-linear" style="stroke-width: 1.5;"></iconify-icon>
+</button>
+</div>
+</div>
+</section>
+<!-- Premium Flight Routes -->
+<section class="py-24 bg-[#0A0A0A] text-white relative overflow-hidden bg-noise">
+<div class="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-gray-700 to-transparent"></div>
+<div class="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-white/[0.03] to-transparent pointer-events-none"></div>
+<div class="max-w-7xl mx-auto px-6 relative z-10">
+<div class="flex flex-col md:flex-row md:items-end justify-between mb-12 gap-6">
+<div>
+<h2 class="font-medium text-3xl tracking-tight mb-2">Private &amp; First Class Routes</h2>
+<p class="text-gray-400 font-normal text-base tracking-tight">Seamlessly book premium cabins and exclusive charter flights.</p>
+</div>
+</div>
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+<div class="group bg-white/[0.02] border border-white/[0.08] hover:border-white/20 rounded-2xl p-6 transition-all duration-300 cursor-pointer flex flex-col sm:flex-row items-center justify-between gap-6 relative overflow-hidden">
+<div class="absolute inset-0 bg-gradient-to-r from-white/[0.05] to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+<div class="flex items-center gap-6 w-full sm:w-auto relative z-10">
+<div class="text-center sm:text-left">
+<div class="text-2xl font-medium tracking-tighter mb-1">JFK</div>
+<div class="text-xs text-gray-400 uppercase tracking-widest">New York</div>
+</div>
+<div class="flex-1 min-w-[100px] flex items-center justify-center relative px-4">
+<div class="w-full h-px border-t border-dashed border-gray-700"></div>
+<iconify-icon class="absolute text-gray-500 bg-[#0A0A0A] px-2 text-sm group-hover:text-white group-hover:translate-x-4 transition-all duration-500" icon="solar:plane-linear" style="stroke-width: 1.5;"></iconify-icon>
+</div>
+<div class="text-center sm:text-right">
+<div class="text-2xl font-medium tracking-tighter mb-1">LHR</div>
+<div class="text-xs text-gray-400 uppercase tracking-widest">London</div>
+</div>
+</div>
+<div class="w-full sm:w-auto flex flex-row sm:flex-col justify-between items-center sm:items-end border-t sm:border-t-0 border-white/[0.08] pt-4 sm:pt-0 relative z-10">
+<div class="text-left sm:text-right mb-0 sm:mb-2">
+<p class="text-xs text-gray-500 uppercase tracking-widest mb-1">First Class</p>
+<p class="text-lg font-medium">From $4,200</p>
+</div>
+<iconify-icon class="text-xl text-gray-500 group-hover:text-white transition-colors" icon="solar:arrow-right-up-linear" style="stroke-width: 1.5;"></iconify-icon>
+</div>
+</div>
+<div class="group bg-white/[0.02] border border-white/[0.08] hover:border-white/20 rounded-2xl p-6 transition-all duration-300 cursor-pointer flex flex-col sm:flex-row items-center justify-between gap-6 relative overflow-hidden">
+<div class="absolute inset-0 bg-gradient-to-r from-white/[0.05] to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+<div class="flex items-center gap-6 w-full sm:w-auto relative z-10">
+<div class="text-center sm:text-left">
+<div class="text-2xl font-medium tracking-tighter mb-1">SFO</div>
+<div class="text-xs text-gray-400 uppercase tracking-widest">San Fran</div>
+</div>
+<div class="flex-1 min-w-[100px] flex items-center justify-center relative px-4">
+<div class="w-full h-px border-t border-dashed border-gray-700"></div>
+<iconify-icon class="absolute text-gray-500 bg-[#0A0A0A] px-2 text-sm group-hover:text-white group-hover:translate-x-4 transition-all duration-500" icon="solar:plane-linear" style="stroke-width: 1.5;"></iconify-icon>
+</div>
+<div class="text-center sm:text-right">
+<div class="text-2xl font-medium tracking-tighter mb-1">HND</div>
+<div class="text-xs text-gray-400 uppercase tracking-widest">Tokyo</div>
+</div>
+</div>
+<div class="w-full sm:w-auto flex flex-row sm:flex-col justify-between items-center sm:items-end border-t sm:border-t-0 border-white/[0.08] pt-4 sm:pt-0 relative z-10">
+<div class="text-left sm:text-right mb-0 sm:mb-2">
+<p class="text-xs text-gray-500 uppercase tracking-widest mb-1">First Class</p>
+<p class="text-lg font-medium">From $6,800</p>
+</div>
+<iconify-icon class="text-xl text-gray-500 group-hover:text-white transition-colors" icon="solar:arrow-right-up-linear" style="stroke-width: 1.5;"></iconify-icon>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Signature Packages -->
+<section class="py-24 bg-white border-b border-gray-100">
+<div class="max-w-7xl mx-auto px-6">
+<div class="flex flex-col md:flex-row md:items-end justify-between mb-12 gap-6">
+<div>
+<h2 class="font-medium text-3xl tracking-tight text-black mb-2">Signature Journeys</h2>
+<p class="text-gray-500 font-normal text-base tracking-tight">End-to-end curated itineraries for the world's most discerning travelers.</p>
+</div>
+<button class="hidden md:inline-flex items-center gap-2 text-sm font-medium text-black hover:text-gray-600 transition-colors">
+                    View all journeys <iconify-icon icon="solar:arrow-right-linear" style="stroke-width: 1.5;"></iconify-icon>
+</button>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+<!-- Package 1 -->
+<div class="group cursor-pointer">
+<div class="aspect-[16/10] md:aspect-[16/9] rounded-2xl overflow-hidden mb-6 bg-gray-100 relative shadow-sm border border-gray-200/50">
+<img alt="Swiss Alps" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" src="https://images.unsplash.com/photo-1533230559526-9769db3bc928?auto=format&amp;fit=crop&amp;q=80&amp;w=1200"/>
+<div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
+<div class="absolute bottom-6 left-6 right-6 flex justify-between items-end">
+<div class="text-white">
+<p class="text-xs font-medium uppercase tracking-widest mb-1 opacity-80">7 Days • 6 Nights</p>
+<h3 class="text-2xl font-medium tracking-tight">Alpine Grandeur</h3>
+</div>
+<div class="text-white text-right">
+<p class="text-xs uppercase tracking-widest mb-1 opacity-80">From</p>
+<p class="text-lg font-medium">$8,500</p>
+</div>
+</div>
+</div>
+<p class="text-sm text-gray-500 leading-relaxed px-1">Helicopter transfers from Geneva, private ski guides, and exclusive access to the region's finest Michelin-starred chalets.</p>
+</div>
+<!-- Package 2 -->
+<div class="group cursor-pointer">
+<div class="aspect-[16/10] md:aspect-[16/9] rounded-2xl overflow-hidden mb-6 bg-gray-100 relative shadow-sm border border-gray-200/50">
+<img alt="Desert Expedition" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" src="https://images.unsplash.com/photo-1542401886-65d6c61de146?auto=format&amp;fit=crop&amp;q=80&amp;w=1200"/>
+<div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
+<div class="absolute bottom-6 left-6 right-6 flex justify-between items-end">
+<div class="text-white">
+<p class="text-xs font-medium uppercase tracking-widest mb-1 opacity-80">10 Days • 9 Nights</p>
+<h3 class="text-2xl font-medium tracking-tight">Namibian Odyssey</h3>
+</div>
+<div class="text-white text-right">
+<p class="text-xs uppercase tracking-widest mb-1 opacity-80">From</p>
+<p class="text-lg font-medium">$12,400</p>
+</div>
+</div>
+</div>
+<p class="text-sm text-gray-500 leading-relaxed px-1">Traverse the Skeleton Coast via private light aircraft, stay in completely isolated luxury camps, and experience untouched wilderness.</p>
+</div>
+</div>
+</div>
+</section>
+<!-- Features -->
+<section class="py-24 bg-white border-b border-gray-100">
+<div class="max-w-7xl mx-auto px-6">
+<div class="grid grid-cols-1 md:grid-cols-3 gap-12">
+<div>
+<div class="w-10 h-10 rounded-lg border border-gray-200 flex items-center justify-center text-black mb-6 shadow-sm">
+<iconify-icon class="text-lg" icon="solar:widget-5-linear" style="stroke-width: 1.5;"></iconify-icon>
+</div>
+<h3 class="font-medium text-lg text-black tracking-tight mb-2">Smart Itineraries</h3>
+<p class="text-gray-500 font-normal text-sm leading-relaxed">Our system automatically organizes your bookings, flights, and reservations into a single, beautiful timeline.</p>
+</div>
+<div>
+<div class="w-10 h-10 rounded-lg border border-gray-200 flex items-center justify-center text-black mb-6 shadow-sm">
+<iconify-icon class="text-lg" icon="solar:wallet-money-linear" style="stroke-width: 1.5;"></iconify-icon>
+</div>
+<h3 class="font-medium text-lg text-black tracking-tight mb-2">Transparent Pricing</h3>
+<p class="text-gray-500 font-normal text-sm leading-relaxed">No hidden fees. Taxes and resort charges are calculated upfront, ensuring absolute clarity at checkout.</p>
+</div>
+<div>
+<div class="w-10 h-10 rounded-lg border border-gray-200 flex items-center justify-center text-black mb-6 shadow-sm">
+<iconify-icon class="text-lg" icon="solar:card-2-linear" style="stroke-width: 1.5;"></iconify-icon>
+</div>
+<h3 class="font-medium text-lg text-black tracking-tight mb-2">One-Click Booking</h3>
+<p class="text-gray-500 font-normal text-sm leading-relaxed">Securely save your preferences and payment methods for instant reservations on future trips.</p>
+</div>
+</div>
+</div>
+</section>
+<!-- About Us / Ethos -->
+<section class="py-24 bg-[#FAFAFA] border-b border-gray-100 overflow-hidden">
+<div class="max-w-7xl mx-auto px-6">
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
+<div>
+<div class="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-gray-200 bg-white shadow-sm mb-6">
+<iconify-icon class="text-black text-sm" icon="solar:info-circle-linear" style="stroke-width: 1.5;"></iconify-icon>
+<span class="text-xs font-medium text-black tracking-wide uppercase">The Horizons Ethos</span>
+</div>
+<h2 class="font-medium text-4xl md:text-5xl lg:text-6xl tracking-tighter text-black mb-6 leading-[1.1]">
+                        Elevating the art<br/>of global exploration.
+                    </h2>
+<p class="text-gray-500 text-base md:text-lg leading-relaxed mb-10 max-w-lg tracking-tight">
+                        We believe that true luxury lies in the unseen details. Horizons was founded to remove friction from premium travel, replacing it with seamless curation, unparalleled access, and absolute privacy.
+                    </p>
+<div class="flex gap-12">
+<div>
+<p class="text-3xl font-medium tracking-tighter text-black mb-1">150+</p>
+<p class="text-xs text-gray-400 uppercase tracking-widest font-medium">Global Partners</p>
+</div>
+<div>
+<p class="text-3xl font-medium tracking-tighter text-black mb-1">24/7</p>
+<p class="text-xs text-gray-400 uppercase tracking-widest font-medium">Concierge</p>
+</div>
+</div>
+</div>
+<div class="relative w-full max-w-md mx-auto lg:max-w-none">
+<div class="aspect-[4/5] rounded-3xl overflow-hidden bg-gray-100 shadow-[0_20px_40px_rgba(0,0,0,0.04)] border border-gray-200/50">
+<img alt="Architecture" class="w-full h-full object-cover" src="assets/photo-1600596542815-ffad4c1539_4723c13dad91.avif"/>
+</div>
+<!-- Floating Access Card -->
+<div class="absolute -bottom-8 -left-8 bg-white/90 backdrop-blur-xl p-6 rounded-2xl border border-gray-200 shadow-[0_20px_40px_rgba(0,0,0,0.08)] hidden md:block w-64">
+<div class="w-10 h-10 rounded-full bg-black flex items-center justify-center mb-4">
+<iconify-icon class="text-xl text-white" icon="solar:star-fall-linear" style="stroke-width: 1.5;"></iconify-icon>
+</div>
+<p class="text-sm font-medium text-black mb-1">Members Only</p>
+<p class="text-xs text-gray-500 leading-relaxed">Direct access to off-market estates and priority waitlists.</p>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Global Network Map -->
+<section class="py-24 bg-white border-b border-gray-100">
+<div class="max-w-7xl mx-auto px-6 mb-12 flex flex-col items-center text-center">
+<h2 class="font-medium text-3xl tracking-tight text-black mb-2">Global Network</h2>
+<p class="text-gray-500 font-normal text-base tracking-tight max-w-xl">Unrestricted access to the world's most coveted destinations, supported by our local intelligence teams.</p>
+</div>
+<div class="max-w-7xl mx-auto px-6">
+<div class="relative w-full aspect-[4/3] md:aspect-[2.5/1] bg-[#FAFAFA] rounded-3xl border border-gray-200/60 overflow-hidden flex items-center justify-center shadow-inner">
+<!-- Abstract Map Grid -->
+<div class="absolute inset-0 bg-dot-grid opacity-60"></div>
+<div class="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0%,#FAFAFA_100%)]"></div>
+<!-- Nodes (Pulsing dots) -->
+<!-- New York -->
+<div class="absolute top-[35%] left-[25%] group cursor-pointer">
+<div class="w-2.5 h-2.5 bg-black rounded-full relative z-10 shadow-[0_0_10px_rgba(0,0,0,0.5)]"></div>
+<div class="absolute inset-0 bg-black/20 rounded-full animate-ping"></div>
+<div class="absolute bottom-4 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 bg-black text-white text-[0.65rem] py-1.5 px-2.5 rounded shadow-lg font-medium uppercase tracking-widest whitespace-nowrap z-20">New York</div>
+</div>
+<!-- London -->
+<div class="absolute top-[28%] left-[48%] group cursor-pointer">
+<div class="w-2.5 h-2.5 bg-black rounded-full relative z-10 shadow-[0_0_10px_rgba(0,0,0,0.5)]"></div>
+<div class="absolute inset-0 bg-black/20 rounded-full animate-ping" style="animation-delay: 0.5s;"></div>
+<div class="absolute bottom-4 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 bg-black text-white text-[0.65rem] py-1.5 px-2.5 rounded shadow-lg font-medium uppercase tracking-widest whitespace-nowrap z-20">London</div>
+</div>
+<!-- Tokyo -->
+<div class="absolute top-[42%] left-[82%] group cursor-pointer">
+<div class="w-2.5 h-2.5 bg-black rounded-full relative z-10 shadow-[0_0_10px_rgba(0,0,0,0.5)]"></div>
+<div class="absolute inset-0 bg-black/20 rounded-full animate-ping" style="animation-delay: 1.2s;"></div>
+<div class="absolute bottom-4 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 bg-black text-white text-[0.65rem] py-1.5 px-2.5 rounded shadow-lg font-medium uppercase tracking-widest whitespace-nowrap z-20">Tokyo</div>
+</div>
+<!-- Dubai -->
+<div class="absolute top-[48%] left-[62%] group cursor-pointer">
+<div class="w-2.5 h-2.5 bg-black rounded-full relative z-10 shadow-[0_0_10px_rgba(0,0,0,0.5)]"></div>
+<div class="absolute inset-0 bg-black/20 rounded-full animate-ping" style="animation-delay: 0.8s;"></div>
+<div class="absolute bottom-4 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 bg-black text-white text-[0.65rem] py-1.5 px-2.5 rounded shadow-lg font-medium uppercase tracking-widest whitespace-nowrap z-20">Dubai</div>
+</div>
+<div class="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 text-center pointer-events-none">
+<div class="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-gray-200 bg-white/80 backdrop-blur-md shadow-sm">
+<iconify-icon class="text-black text-sm" icon="solar:radar-linear" style="stroke-width: 1.5;"></iconify-icon>
+<span class="text-[0.65rem] font-medium text-black tracking-widest uppercase">Live Radar Active</span>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Final CTA -->
+<section class="py-32 bg-[#0A0A0A] relative overflow-hidden bg-noise border-t border-gray-800">
+<div class="absolute inset-0 bg-[radial-gradient(circle_at_bottom,_var(--tw-gradient-stops))] from-white/[0.04] to-transparent pointer-events-none"></div>
+<div class="max-w-3xl mx-auto px-6 text-center relative z-10">
+<iconify-icon class="text-5xl text-white/30 mb-8" icon="solar:infinity-linear" style="stroke-width: 1.5;"></iconify-icon>
+<h2 class="font-medium text-4xl md:text-6xl tracking-tighter text-white mb-6 leading-[1.05]">Begin your journey.</h2>
+<p class="text-gray-400 text-base md:text-lg mb-10 max-w-xl mx-auto font-normal tracking-tight">Join an exclusive community of discerning travelers. Request access to Horizons Select to unlock curated inventory and dedicated service.</p>
+<form class="flex flex-col sm:flex-row items-center justify-center gap-3 max-w-md mx-auto">
+<div class="relative w-full">
+<iconify-icon class="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" icon="solar:letter-linear" style="stroke-width: 1.5;"></iconify-icon>
+<input class="w-full bg-white/[0.03] border border-white/[0.1] text-white text-sm rounded-full pl-11 pr-4 py-3.5 focus:outline-none focus:border-white/30 transition-colors placeholder:text-gray-600 font-medium" placeholder="Enter your email" type="email"/>
+</div>
+<button class="w-full sm:w-auto bg-white text-black px-8 py-3.5 rounded-full text-sm font-medium hover:bg-gray-200 hover:scale-[1.02] transition-all duration-200 whitespace-nowrap shadow-[0_0_20px_rgba(255,255,255,0.1)]" type="button">
+                    Request Access
+                </button>
+</form>
+</div>
+</section>
+<!-- Footer -->
+<footer class="bg-white pt-20 pb-10">
+<div class="max-w-7xl mx-auto px-6">
+<div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-8 mb-16">
+<div class="col-span-2 lg:col-span-2 pr-8">
+<a class="flex items-center gap-2 mb-6" href="#">
+<iconify-icon class="text-black text-xl" icon="solar:routing-linear" style="stroke-width: 1.5;"></iconify-icon>
+<span class="font-medium text-base tracking-tighter text-black uppercase">HORIZONS</span>
+</a>
+<p class="text-gray-500 font-normal text-sm leading-relaxed mb-6 max-w-xs">
+                        The modern standard for booking premium travel experiences globally.
+                    </p>
+<div class="flex gap-4">
+<a class="text-gray-400 hover:text-black transition-colors" href="#"><iconify-icon class="text-xl" icon="solar:instagram-linear"></iconify-icon></a>
+<a class="text-gray-400 hover:text-black transition-colors" href="#"><iconify-icon class="text-xl" icon="solar:twitter-linear"></iconify-icon></a>
+</div>
+</div>
+<div>
+<h4 class="font-medium text-sm text-black mb-4">Product</h4>
+<ul class="space-y-3">
+<li><a class="text-gray-500 hover:text-black text-sm transition-colors" href="#">Stays</a></li>
+<li><a class="text-gray-500 hover:text-black text-sm transition-colors" href="#">Flights</a></li>
+<li><a class="text-gray-500 hover:text-black text-sm transition-colors" href="#">Experiences</a></li>
+<li><a class="text-gray-500 hover:text-black text-sm transition-colors" href="#">Horizons Select</a></li>
+</ul>
+</div>
+<div>
+<h4 class="font-medium text-sm text-black mb-4">Company</h4>
+<ul class="space-y-3">
+<li><a class="text-gray-500 hover:text-black text-sm transition-colors" href="#">About</a></li>
+<li><a class="text-gray-500 hover:text-black text-sm transition-colors" href="#">Careers</a></li>
+<li><a class="text-gray-500 hover:text-black text-sm transition-colors" href="#">Press</a></li>
+<li><a class="text-gray-500 hover:text-black text-sm transition-colors" href="#">Contact</a></li>
+</ul>
+</div>
+<div>
+<h4 class="font-medium text-sm text-black mb-4">Legal</h4>
+<ul class="space-y-3">
+<li><a class="text-gray-500 hover:text-black text-sm transition-colors" href="#">Privacy</a></li>
+<li><a class="text-gray-500 hover:text-black text-sm transition-colors" href="#">Terms</a></li>
+<li><a class="text-gray-500 hover:text-black text-sm transition-colors" href="#">Cookie Policy</a></li>
+</ul>
+</div>
+</div>
+<div class="border-t border-gray-100 pt-8 flex flex-col md:flex-row items-center justify-between gap-4">
+<p class="text-gray-400 text-sm">© 2024 Horizons Inc. All rights reserved.</p>
+<div class="flex items-center gap-2 text-sm text-gray-400">
+<span class="w-2 h-2 rounded-full bg-green-500"></span>
+                    All systems operational
+                </div>
+</div>
+</div>
+</footer>
+<!-- Interactive Scripts -->
+<script>
+        // Navbar scroll effect
+        const navbar = document.getElementById('navbar');
+        window.addEventListener('scroll', () => {
+            if (window.scrollY > 20) {
+                navbar.classList.add('shadow-sm');
+                navbar.classList.replace('bg-white/70', 'bg-white/90');
+            } else {
+                navbar.classList.remove('shadow-sm');
+                navbar.classList.replace('bg-white/90', 'bg-white/70');
+            }
+        });
+
+        // Guest Dropdown Logic
+        const guestTrigger = document.getElementById('guest-trigger');
+        const guestDropdown = document.getElementById('guest-dropdown');
+        const guestCountDisplay = document.getElementById('guest-count');
+        
+        let guests = { adults: 2, children: 0 };
+
+        guestTrigger.addEventListener('click', (e) => {
+            if(e.target.closest('button')) return; 
+            guestDropdown.classList.toggle('hidden');
+            if(!guestDropdown.classList.contains('hidden')) {
+                guestDropdown.classList.add('dropdown-enter-active');
+            } else {
+                guestDropdown.classList.remove('dropdown-enter-active');
+            }
+        });
+
+        document.addEventListener('click', (e) => {
+            if (!guestTrigger.contains(e.target)) {
+                guestDropdown.classList.add('hidden');
+                guestDropdown.classList.remove('dropdown-enter-active');
+            }
+        });
+
+        window.updateGuests = function(type, change) {
+            let newVal = guests[type] + change;
+            if (type === 'adults' && newVal < 1) newVal = 1; 
+            if (type === 'children' && newVal < 0) newVal = 0; 
+            
+            guests[type] = newVal;
+            document.getElementById(`${type}-val`).innerText = newVal;
+            
+            let total = guests.adults + guests.children;
+            guestCountDisplay.innerText = `${total} Guest${total > 1 ? 's' : ''}`;
+        };
+
+        // Subtle entry animations
+        document.addEventListener("DOMContentLoaded", () => {
+            const observerOptions = {
+                root: null,
+                rootMargin: '0px',
+                threshold: 0.1
+            };
+
+            const observer = new IntersectionObserver((entries, observer) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        entry.target.style.opacity = "1";
+                        entry.target.style.transform = "translateY(0)";
+                        observer.unobserve(entry.target);
+                    }
+                });
+            }, observerOptions);
+
+            document.querySelectorAll('section > div').forEach((el) => {
+                el.style.opacity = "0";
+                el.style.transform = "translateY(20px)";
+                el.style.transition = "opacity 0.8s ease-out, transform 0.8s ease-out";
+                observer.observe(el);
+            });
+        });
+    </script>
+<script data-img-fallback-handler="">!function(){var f=["https://hoirqrkdgbmvpwutwuwj.supabase.co/storage/v1/object/public/assets/assets/917d6f93-fb36-439a-8c48-884b67b35381_1600w.jpg","https://hoirqrkdgbmvpwutwuwj.supabase.co/storage/v1/object/public/assets/assets/4734259a-bad7-422f-981e-ce01e79184f2_1600w.jpg","https://hoirqrkdgbmvpwutwuwj.supabase.co/storage/v1/object/public/assets/assets/c543a9e1-f226-4ced-80b0-feb8445a75b9_1600w.jpg","https://hoirqrkdgbmvpwutwuwj.supabase.co/storage/v1/object/public/assets/assets/5bab247f-35d9-400d-a82b-fd87cfe913d2_1600w.webp","https://hoirqrkdgbmvpwutwuwj.supabase.co/storage/v1/object/public/assets/assets/30104e3c-5eea-4b93-93e9-5313698a7156_1600w.webp"],h=new Set;function g(s){for(var x=0,i=0;i<s.length;i++)x=(x<<5)-x+s.charCodeAt(i)|0;return f[Math.abs(x)%f.length]}function r(t){var s=t.src;if(s&&!h.has(s)){h.add(s);t.src=g(s)}}window.addEventListener("error",function(e){var t=e.target;if(t&&t.tagName==="IMG")r(t)},!0);function c(){document.querySelectorAll("img").forEach(function(i){if(i.complete&&!i.naturalWidth&&i.src)r(i)})}if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",c);else c()}()</script></body></html>

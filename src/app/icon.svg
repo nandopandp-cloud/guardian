@@ -1,0 +1,23 @@
+<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="g" x1="24" y1="2" x2="24" y2="46" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#a3a3a3"/>
+    </linearGradient>
+    <radialGradient id="s" cx="0.5" cy="0.5" r="0.5">
+      <stop stop-color="#3ec46d" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#3ec46d" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="c">
+      <path d="M24 3.5 L40.5 9 V23 C40.5 33.5 33.5 41 24 44.5 C14.5 41 7.5 33.5 7.5 23 V9 Z"/>
+    </clipPath>
+  </defs>
+  <path d="M24 3.5 L40.5 9 V23 C40.5 33.5 33.5 41 24 44.5 C14.5 41 7.5 33.5 7.5 23 V9 Z" fill="#141414" stroke="url(#g)" stroke-width="2" stroke-linejoin="round"/>
+  <g clip-path="url(#c)">
+    <circle cx="24" cy="23" r="12" stroke="#ffffff2e" stroke-width="1"/>
+    <circle cx="24" cy="23" r="7.5" stroke="#ffffff47" stroke-width="1"/>
+    <path d="M24 23 L24 9 A14 14 0 0 1 36 16 Z" fill="url(#s)"/>
+    <line x1="24" y1="23" x2="24" y2="9" stroke="#3ec46d" stroke-width="1.2"/>
+  </g>
+  <circle cx="24" cy="23" r="2.4" fill="url(#g)"/>
+</svg>
