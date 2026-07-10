@@ -43,7 +43,7 @@ export function LoginScreen() {
       >
         {/* Brand */}
         <div className="mb-8 flex flex-col items-center text-center">
-          <div className="mb-5 flex size-16 items-center justify-center rounded-2xl border border-border bg-card shadow-[inset_0_1px_0_hsl(0_0%_100%/0.06)]">
+          <div className="mb-5 flex size-16 items-center justify-center rounded-2xl border border-border bg-card shadow-soft">
             <Logo markOnly size={40} animated />
           </div>
           <h1 className="font-display text-2xl font-semibold tracking-tight text-foreground">
@@ -55,7 +55,7 @@ export function LoginScreen() {
         </div>
 
         {/* Card */}
-        <div className="rounded-2xl border border-border bg-card/80 p-6 shadow-2xl backdrop-blur-xl">
+        <div className="rounded-2xl border border-border bg-card/80 p-6 shadow-elevated backdrop-blur-xl">
           <form onSubmit={onSubmit} className="space-y-4">
             <div className="space-y-1.5">
               <label

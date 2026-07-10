@@ -2,9 +2,41 @@
 @tailwind components;
 @tailwind utilities;
 
+/* react-day-picker v9 base layout */
+.rdp-root {
+  --rdp-cell-size: 2rem;
+}
+
 @layer base {
+  /* Light theme (default) — refined neutral palette à la luxury-travel */
   :root {
-    /* Dark theme only — Guardian is dark by design */
+    --background: 0 0% 99%;
+    --foreground: 0 0% 9%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 9%;
+
+    --elevated: 0 0% 97%;
+
+    --muted: 0 0% 95%;
+    --muted-foreground: 0 0% 42%;
+
+    --border: 0 0% 90%;
+    --input: 0 0% 90%;
+    --ring: 0 0% 62%;
+
+    /* Risk palette — tuned for light backgrounds */
+    --risk-normal: 142 66% 36%; /* green  */
+    --risk-low: 214 84% 50%; /* blue   */
+    --risk-medium: 38 92% 46%; /* amber  */
+    --risk-high: 24 90% 50%; /* orange */
+    --risk-critical: 0 74% 51%; /* red    */
+
+    --shadow-color: 0 0% 0%;
+    --radius: 0.75rem;
+  }
+
+  .dark {
     --background: 0 0% 4%;
     --foreground: 0 0% 96%;
 
@@ -20,14 +52,13 @@
     --input: 0 0% 14%;
     --ring: 0 0% 40%;
 
-    /* Risk palette */
-    --risk-normal: 142 60% 45%; /* green  */
-    --risk-low: 210 90% 58%; /* blue   */
-    --risk-medium: 45 93% 55%; /* yellow */
-    --risk-high: 25 95% 55%; /* orange */
-    --risk-critical: 0 84% 60%; /* red    */
+    --risk-normal: 142 60% 45%;
+    --risk-low: 210 90% 58%;
+    --risk-medium: 45 93% 55%;
+    --risk-high: 25 95% 55%;
+    --risk-critical: 0 84% 60%;
 
-    --radius: 0.75rem;
+    --shadow-color: 0 0% 0%;
   }
 
   * {
@@ -40,7 +71,7 @@
     text-rendering: optimizeLegibility;
   }
 
-  /* Subtle, refined scrollbars */
+  /* Refined, theme-aware scrollbars */
   ::-webkit-scrollbar {
     width: 10px;
     height: 10px;
@@ -49,12 +80,12 @@
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: hsl(0 0% 20%);
+    background: hsl(var(--muted-foreground) / 0.3);
     border-radius: 999px;
     border: 3px solid hsl(var(--background));
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: hsl(0 0% 28%);
+    background: hsl(var(--muted-foreground) / 0.5);
   }
 }
 
@@ -67,11 +98,33 @@
     scrollbar-width: none;
   }
 
+  /* Soft, layered shadows (luxury-travel vocabulary), theme-aware. */
+  .shadow-soft {
+    box-shadow:
+      0 1px 2px hsl(var(--shadow-color) / 0.04),
+      0 8px 24px hsl(var(--shadow-color) / 0.06);
+  }
+  .dark .shadow-soft {
+    box-shadow:
+      0 1px 2px hsl(var(--shadow-color) / 0.4),
+      0 8px 24px hsl(var(--shadow-color) / 0.35);
+  }
+  .shadow-elevated {
+    box-shadow:
+      0 2px 4px hsl(var(--shadow-color) / 0.05),
+      0 12px 40px hsl(var(--shadow-color) / 0.1);
+  }
+  .dark .shadow-elevated {
+    box-shadow:
+      0 2px 4px hsl(var(--shadow-color) / 0.5),
+      0 12px 40px hsl(var(--shadow-color) / 0.5);
+  }
+
   /* Subtle dot grid — used behind hero / login surfaces. */
   .bg-dot-grid {
     background-image: radial-gradient(
       circle at 1px 1px,
-      hsl(0 0% 100% / 0.05) 1px,
+      hsl(var(--foreground) / 0.06) 1px,
       transparent 0
     );
     background-size: 22px 22px;
@@ -140,7 +193,7 @@
   border-radius: inherit;
   background: radial-gradient(
     420px circle at var(--mx, 50%) var(--my, 50%),
-    hsl(0 0% 100% / 0.06),
+    hsl(var(--foreground) / 0.05),
     transparent 42%
   );
   opacity: 0;

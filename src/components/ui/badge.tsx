@@ -16,6 +16,7 @@ export function RiskBadge({
   ...props
 }: RiskBadgeProps) {
   const meta = riskMeta(level);
+  const pulse = level === "high" || level === "critical";
   return (
     <span
       className={cn(
@@ -28,10 +29,18 @@ export function RiskBadge({
       {...props}
     >
       {dot && (
-        <span
-          className="size-1.5 rounded-full"
-          style={{ backgroundColor: meta.hsl }}
-        />
+        <span className="relative flex size-1.5">
+          {pulse && (
+            <span
+              className="absolute inline-flex size-full animate-ping rounded-full opacity-60"
+              style={{ backgroundColor: meta.hsl }}
+            />
+          )}
+          <span
+            className="relative inline-flex size-1.5 rounded-full"
+            style={{ backgroundColor: meta.hsl }}
+          />
+        </span>
       )}
       {meta.label}
     </span>

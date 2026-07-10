@@ -37,6 +37,8 @@ export interface TimelineEvent {
   id: string;
   /** HH:MM */
   time: string;
+  /** ISO date the event occurred — used to filter evidence by period. */
+  date: string;
   title: string;
   description: string;
   /** Points applied by this event, if any. */
@@ -70,3 +72,14 @@ export interface Student {
 }
 
 export type PeriodKey = "7d" | "30d" | "season" | "custom";
+
+export interface DateRange {
+  from: string; // ISO
+  to: string; // ISO
+}
+
+export interface Period {
+  key: PeriodKey;
+  /** Present when key === "custom". */
+  range?: DateRange;
+}

@@ -1,6 +1,8 @@
 import { riskFromScore } from "./risk";
+import { studentsInPeriod } from "./period";
 import type {
   Occurrence,
+  Period,
   ScoreBreakdown,
   ScoreComponent,
   Student,
@@ -133,36 +135,76 @@ function buildBreakdown(target: number): {
   return { breakdown, occurrences };
 }
 
-function buildTimeline(occurrences: Occurrence[]): TimelineEvent[] {
-  const events: TimelineEvent[] = [
-    { id: "t0", time: "08:31", title: "Quiz iniciado", description: "Sessão de prova aberta pelo estudante." },
-  ];
-  let minute = 31;
-  const positives = occurrences.filter((o) => o.weight > 0);
-  positives.forEach((o, i) => {
-    minute += between(0, 2);
-    events.push({
-      id: `t${i + 1}`,
-      time: `08:${String(minute).padStart(2, "0")}`,
-      title: o.label,
-      description: o.description,
-      weight: o.weight,
-    });
-  });
-  minute += between(1, 4);
-  events.push({
-    id: "tend",
-    time: `08:${String(Math.min(59, minute)).padStart(2, "0")}`,
-    title: "Sessão finalizada",
-    description: "Prova submetida e sessão encerrada.",
-  });
-  return events;
-}
+const NOW_MS = new Date("2026-07-10T09:00:00Z").getTime();
 
 function daysAgoISO(days: number): string {
-  const d = new Date("2026-07-10T09:00:00Z");
-  d.setDate(d.getDate() - days);
-  return d.toISOString();
+  return new Date(NOW_MS - days * 864e5).toISOString();
+}
+
+/**
+ * Build a timeline spread across several sessions on different days within
+ * the season, so filtering by period genuinely changes what is shown. The
+ * most recent session lands on `lastActivityDays` ago.
+ */
+function buildTimeline(
+  occurrences: Occurrence[],
+  lastActivityDays: number,
+): TimelineEvent[] {
+  const positives = occurrences.filter((o) => o.weight > 0);
+  // 2–4 sessions; the newest at lastActivityDays, older ones further back.
+  const sessionCount = between(2, 4);
+  const sessionDays: number[] = [lastActivityDays];
+  for (let s = 1; s < sessionCount; s++) {
+    sessionDays.push(
+      lastActivityDays + s * between(6, 20) + between(0, 5),
+    );
+  }
+
+  const events: TimelineEvent[] = [];
+  let idc = 0;
+
+  sessionDays.forEach((dayAgo, sIdx) => {
+    const date = daysAgoISO(dayAgo);
+    const hour = between(8, 20);
+    let minute = between(2, 20);
+    const hh = String(hour).padStart(2, "0");
+
+    events.push({
+      id: `t${idc++}`,
+      date,
+      time: `${hh}:${String(minute).padStart(2, "0")}`,
+      title: "Quiz iniciado",
+      description: "Sessão de prova aberta pelo estudante.",
+    });
+
+    // Distribute this session's share of positive occurrences.
+    const share = positives.filter((_, i) => i % sessionDays.length === sIdx);
+    share.forEach((o) => {
+      minute = Math.min(58, minute + between(1, 6));
+      events.push({
+        id: `t${idc++}`,
+        date,
+        time: `${hh}:${String(minute).padStart(2, "0")}`,
+        title: o.label,
+        description: o.description,
+        weight: o.weight,
+      });
+    });
+
+    minute = Math.min(59, minute + between(1, 4));
+    events.push({
+      id: `t${idc++}`,
+      date,
+      time: `${hh}:${String(minute).padStart(2, "0")}`,
+      title: "Sessão finalizada",
+      description: "Prova submetida e sessão encerrada.",
+    });
+  });
+
+  // Newest first.
+  return events.sort(
+    (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
+  );
 }
 
 /* ------------------------------------------------------------------ *
@@ -190,14 +232,15 @@ function makeStudent(i: number): Student {
   const [city, state] = pick(CITIES);
   const fraudScore = targetScoreForIndex(i);
   const { breakdown, occurrences } = buildBreakdown(fraudScore);
-  const timeline = buildTimeline(occurrences);
+  const lastActivityDays = between(0, 40);
+  const timeline = buildTimeline(occurrences, lastActivityDays);
   const risk = riskFromScore(fraudScore).level;
   const slug = name.toLowerCase().replace(/[^a-z]/g, "");
 
   return {
     id: `stu_${String(i + 1).padStart(4, "0")}`,
     name,
-    avatar: `https://api.dicebear.com/9.x/avataaars/svg?seed=${slug}${i}&backgroundColor=1e1e1e,262626,2d2d2d`,
+    avatar: `https://api.dicebear.com/9.x/avataaars/svg?seed=${slug}${i}&backgroundColor=b6e3f4,c0aede,d1d4f9,ffd5dc,ffdfbf`,
     email: `${slug}@escola.sp.gov.br`,
     school: pick(SCHOOLS),
     className: pick(CLASSES),
@@ -207,7 +250,7 @@ function makeStudent(i: number): Student {
     integrityScore: Math.max(0, 100 - fraudScore - between(0, 6)),
     risk,
     rank: i + 1,
-    lastActivity: daysAgoISO(between(0, 29)),
+    lastActivity: daysAgoISO(lastActivityDays),
     breakdown,
     occurrences,
     timeline,
@@ -222,13 +265,23 @@ export const STUDENTS: Student[] = Array.from({ length: 200 }, (_, i) =>
 /** Default view: the top 10 of the league leaderboard. */
 export const TOP_STUDENTS = STUDENTS.slice(0, 10);
 
-export function searchStudents(query: string): Student[] {
+/**
+ * Period-aware search. Empty query → the highest-ranked students with activity
+ * in the period (up to 12). Non-empty → matches across all students that were
+ * active in the period.
+ */
+export function searchStudents(query: string, period: Period): Student[] {
+  const inPeriod = studentsInPeriod(STUDENTS, period);
   const q = query.trim().toLowerCase();
-  if (!q) return TOP_STUDENTS;
-  return STUDENTS.filter((s) =>
-    [s.name, s.email, s.id, s.school, s.className, s.city]
-      .join(" ")
-      .toLowerCase()
-      .includes(q),
-  ).slice(0, 40);
+  if (!q) {
+    return [...inPeriod].sort((a, b) => a.rank - b.rank).slice(0, 12);
+  }
+  return inPeriod
+    .filter((s) =>
+      [s.name, s.email, s.id, s.school, s.className, s.city]
+        .join(" ")
+        .toLowerCase()
+        .includes(q),
+    )
+    .slice(0, 40);
 }
