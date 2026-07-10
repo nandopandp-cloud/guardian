@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, Download } from "lucide-react";
+import { BookOpen, ChevronDown, Download, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Period, Student } from "@/lib/types";
 import { ExportActions } from "./export-menu";
@@ -69,8 +69,43 @@ export function HeaderExport({
             period={period}
             variant="menu"
           />
+
+          <div className="mt-1 border-t border-border pt-1">
+            <p className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              Documentação
+            </p>
+            <MatrixDocButton />
+          </div>
         </div>
       )}
     </div>
+  );
+}
+
+/** Downloads the institutional Fraud Matrix document (Prepara SP). */
+function MatrixDocButton() {
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      onClick={async () => {
+        if (busy) return;
+        setBusy(true);
+        try {
+          const { exportMatrixDoc } = await import("@/lib/matrix-doc-build");
+          await exportMatrixDoc();
+        } finally {
+          setBusy(false);
+        }
+      }}
+      disabled={busy}
+      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-60"
+    >
+      {busy ? (
+        <Loader2 className="size-4 animate-spin" />
+      ) : (
+        <BookOpen className="size-4 text-blue-500" />
+      )}
+      Matriz de Fraude (PDF)
+    </button>
   );
 }
