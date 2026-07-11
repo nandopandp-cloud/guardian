@@ -75,7 +75,7 @@ export function HeaderExport({
               Documentação
             </p>
             <DocButton
-              label="Premissas Antifraude (PDF)"
+              label="Premissas & FAQ v2.0 (PDF)"
               iconColor="text-orange-500"
               load={() => import("@/lib/antifraud-doc").then((m) => m.exportAntifraudDoc())}
             />

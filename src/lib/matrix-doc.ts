@@ -311,6 +311,101 @@ function callout(
   L.y += h + 10;
 }
 
+/** Ordered list with small navy number badges; each item paginates. */
+function numberedList(L: Layout, items: string[], opts: { accent?: RGB } = {}) {
+  const d = L.doc;
+  const accent = opts.accent ?? C.navy;
+  const size = 9.5;
+  const lh = 13.5;
+  const indent = 26;
+  items.forEach((item, idx) => {
+    d.setFont("helvetica", "normal");
+    d.setFontSize(size);
+    const lines: string[] = d.splitTextToSize(
+      sanitize(item),
+      CONTENT_W - indent,
+    );
+    const blockH = lines.length * lh;
+    L.ensure(blockH);
+    // Number badge on first line
+    setFill(d, accent);
+    d.circle(M.left + 8, L.y + size - 2, 8, "F");
+    txt(d, String(idx + 1), M.left + 8, L.y + size + 1, {
+      size: 7.5,
+      color: C.white,
+      weight: "bold",
+      align: "center",
+    });
+    lines.forEach((line: string, i: number) => {
+      if (i > 0) L.ensure(lh);
+      txt(d, line, M.left + indent, L.y + size, { size, color: C.body });
+      L.y += lh;
+    });
+    L.y += 4;
+  });
+  L.y += 2;
+}
+
+/** FAQ item: bold question + wrapped answer. Keeps Q + first answer line together. */
+function faqItem(L: Layout, question: string, answer: string, n?: number) {
+  const d = L.doc;
+  const qSize = 10;
+  const aSize = 9.5;
+  const lh = 13.5;
+  d.setFont("helvetica", "bold");
+  d.setFontSize(qSize);
+  const label = n != null ? `${n}. ${question}` : question;
+  const qLines: string[] = d.splitTextToSize(sanitize(label), CONTENT_W);
+  d.setFont("helvetica", "normal");
+  d.setFontSize(aSize);
+  const aLines: string[] = d.splitTextToSize(sanitize(answer), CONTENT_W);
+
+  // Keep the question and at least one answer line together.
+  L.ensure(qLines.length * lh + lh + 6);
+
+  qLines.forEach((line: string) => {
+    L.ensure(lh);
+    txt(d, line, M.left, L.y + qSize, {
+      size: qSize,
+      color: C.navy,
+      weight: "bold",
+    });
+    L.y += lh + 0.5;
+  });
+  L.y += 2;
+  aLines.forEach((line: string) => {
+    L.ensure(lh);
+    txt(d, line, M.left, L.y + aSize, { size: aSize, color: C.body });
+    L.y += lh;
+  });
+  L.y += 10;
+}
+
+/** Recommended-answer quote block (subtle panel with left rule). */
+function quote(L: Layout, text: string) {
+  const d = L.doc;
+  d.setFont("helvetica", "italic");
+  d.setFontSize(9);
+  const lines: string[] = d.splitTextToSize(sanitize(text), CONTENT_W - 28);
+  const h = 16 + lines.length * 13 + 6;
+  L.ensure(h + 6);
+  setFill(d, C.panelBlue);
+  d.roundedRect(M.left, L.y, CONTENT_W, h, 7, 7, "F");
+  setFill(d, C.blue);
+  d.roundedRect(M.left, L.y, 4, h, 2, 2, "F");
+  let ty = L.y + 22;
+  d.setFont("helvetica", "italic");
+  for (const line of lines) {
+    d.setFont("helvetica", "italic");
+    d.setFontSize(9);
+    setText(d, C.body);
+    d.text(sanitize(line), M.left + 16, ty);
+    ty += 13;
+  }
+  d.setFont("helvetica", "normal");
+  L.y += h + 10;
+}
+
 /* ---- cover -------------------------------------------------------- */
 
 interface CoverOpts {
@@ -451,6 +546,9 @@ export {
   subheading,
   paragraph,
   bullets,
+  numberedList,
+  faqItem,
+  quote,
   callout,
   C,
   M,
